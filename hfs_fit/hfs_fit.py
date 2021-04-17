@@ -1,20 +1,26 @@
+"""TODO add a class explaiaition."""
+from functools import wraps
+import copy as cp
+from typing import Callable
+
+from astropy.modeling.models import Voigt1D
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button
-from astropy.modeling.models import Voigt1D
-import copy as cp
 import pandas as pd
 
 import hfs_fit.interpolation as interp
 import hfs_fit.relInt as ri
 
 
-#Change in wavenumber from hfs splitting (of a fine-structure level) is given by 
+# 
 def K(F, J, I):
+    """Calculate change in wavenumber from hfs splitting (of a fine-structure level)."""
     return F * (F + 1) - J * (J + 1) - I * (I + 1)
 
 def dE(A, B, K, F, J, I):
     '''
+    # TODO wtf is dis, ok B should not be zero but what da function doin?
     B should be zero when I or J is 0 or 1/2 to avoid division by zero
     '''
     if J != .5 and J != 0.:
@@ -22,8 +28,8 @@ def dE(A, B, K, F, J, I):
     else:
         return 0.5 * A * K
 
-#Definition and use of the saturation parameter
 def satFit(fit, sat):
+    """Definition and use of the saturation parameter."""
     return fit * np.exp(- sat * fit)
 
 
@@ -88,46 +94,70 @@ def get_user_levels():
     return upperJ, lowerJ
 
 
-class hfs:
-    def __init__(self, dataASCII = 'spectrum.txt', fitLog = 'fitLog.xlsx', nuclearSpin = 3.5):
-        '''
-        input strings can be directories to the files.
-        dataASCII is the string of directory to asc file of spectral data
-        (CSV, first column is wavenumber, second column is intensity)
-        '''
-        if fitLog != None:
-            self.fitLogName = fitLog
-            self.fitLog = pd.read_excel(self.fitLogName, index_col = 0)
-        else:
-            self.fitLogName = None
-            self.fitLog = None
-        self.I = nuclearSpin
-        print('Loading spectrum...')
-        self.dataFile = dataASCII
-        if isinstance(dataASCII, str) == True:
-            self.data = np.loadtxt(self.dataFile, delimiter = ',')
-        else:
-            print('Please use an ASCII file for the spectrum.')
-            return
-        print('Done')
-
-        self.paramsUnits = ['mK','mK','mK','mK','mK','mK','arb.','/cm','arb.']
-        self.paramsNames  = ['A_u', 'A_l', 'B_u', 'B_l', 'G_w', 'L_w', 'Area Parameter', 'CoG Wavenumber', 'Saturation Parameter']
-
-    def PlotSpec(self, wn = None):
-        '''
-        Plots the spectrum, specifying a wavenumber will plot a +- 1/cm range around it.
-        '''
-        plt.close(0)
-        plt.figure(0)
-        plt.plot(self.data[:, 0], self.data[:, 1], label = 'Spectrum')        
-        plt.xlabel(r'Wavenumber (cm$^{-1}$)')
-        plt.ylabel('Intensity (arb.)')
-        plt.title('Spectrum ' + self.dataFile)
-        if wn != None:
-            plt.xlim(wn - 1, wn + 1)
+def plot_method(plot_func: callable) -> Callable:
+    """Common plotting code wrapper to reduce boiler plate code."""
+    @wraps(plot_func)
+    def inner(*args, **kwargs):
+        """Setup an axes, call the plot function and show."""
+        plt.close(plot_func.__name__)  # close a previous plot if it exists
+        plt.figure(plot_func.__name__)
+        axes = plt.axes()
+        resp = plot_func(*args, axes=axes, **kwargs)
         plt.grid()
         plt.show()
+        return resp
+    return inner
+
+
+class hfs:
+    """TODO Explain wtf I am."""
+
+    paramsUnits = ['mK', 'mK', 'mK', 'mK', 'mK', 'mK', 'arb.', '/cm', 'arb.']
+    paramsNames = ['A_u', 'A_l', 'B_u', 'B_l', 'G_w', 'L_w', 'Area Parameter', 'CoG Wavenumber', 'Saturation Parameter']
+    
+    def __init__(
+        self, 
+        dataASCII: str = 'spectrum.txt', 
+        fitLog: str = 'fitLog.xlsx', 
+        nuclearSpin: float = 3.5
+    ):
+        '''Initialise hsf object.
+        
+        parameters:
+            dataASCII: path to asc file of spectral csv data (two cols: wavenumber, intensity)
+            fitLog: path to output fit log if desired
+            nuclearSpin: TODO what am I
+
+        '''
+        self.I = nuclearSpin
+        self.dataFile = dataASCII
+        self.fitLogName = fitLog
+        self.fitLog = None
+
+        if fitLog:
+            self.fitLog = pd.read_excel(self.fitLogName, index_col = 0)
+        
+        print('Loading spectrum...')
+        assert isinstance(dataASCII, str), 'Please use an ASCII file for the spectrum.'
+        self.data = np.loadtxt(self.dataFile, delimiter = ',')
+
+        print(f'hfs obj {id(self)} initalised')
+
+    @plot_method
+    def PlotSpec(self, axes, wn: float = None):
+        '''Plot the spectrum from `dataASCII`.
+        
+        parameters:
+            wn (optinal): wavenumber (in cm) to limit the axis +-1/cm range around it.
+        '''
+        axes.plot(self.data[:, 0], self.data[:, 1], label='Spectrum')       
+        axes.set(
+            xlabel=r'Wavenumber (cm$^{-1}$)', 
+            ylabel='Intensity (arb.)', 
+            title=f'Spectrum {self.dataFile}'
+        ) 
+        if wn:
+            axes.xlim(wn - 1, wn + 1)
 
     def NewFit(self):
         '''
@@ -135,7 +165,12 @@ class hfs:
         Resets everything (J, A, B, Gw, etc.) so make sure you save the previous fit.
         Have the wn range for the line and wn range for the noise ready.
         '''
-        self.SetJNoLevList()
+        # Sets J values, calculate all transitions and list in terms of F values. Relative intensity calculation
+        self.upperJ, self.lowerJ = get_user_levels() 
+        self.AllowedTransitions()
+        self.Swing()
+        self.WNRange()
+        
         self.firstFit = True
         self.Hold()
         self.ParamsGuess()
@@ -171,15 +206,14 @@ class hfs:
                 return
 
     def Noise(self):
-        '''
-        Estimates noise and SNR.
-        With given inputs.
-        '''
+        '''Estimate noise and Signal to Noise Ratio.'''
         start_wn, end_wn = get_user_noise()
-        line = np.array([d for d in self.data if d[0] >= start_wn and d[0] <= end_wn])
+        line = np.array([
+            d for d in self.data 
+            if d[0] >= start_wn and d[0] <= end_wn
+        ])
         line[:, 1] /= self.normFactor
         self.SNR = 1. / np.std(line[:, 1], ddof = 1)
-        
         
     def FitDone(self, u, l):
         '''
@@ -205,26 +239,14 @@ class hfs:
         i = self.FitLine(self.paramsGuess)
         d = np.gradient(i, w)
         return np.abs(d).sum()
-        
-
-    def SetJNoLevList(self):
-        '''
-        Sets J values, calculate all transitions and list in terms of F values. Relative intensity calculation.
-        '''
-        self.upperJ, self.lowerJ = get_user_levels() 
-        self.AllowedTransitions()
-        self.Swing()
-        self.WNRange()
 
     def AllowedTransitions(self):
-        '''
-        Calculates relative intensities of allowed HFS transitions of the fine structure transition.
-        '''
-        self.listF = ri.AllowedTransitions(self.I, self.upperJ, self.lowerJ) #list of [upperF, lowerF] transitions
-        relIntensities = []
-        for f in self.listF:
-            relIntensities.append(ri.RelIntensity(self.I, self.upperJ, self.lowerJ, f[0], f[1]))
-        self.relIntensities = np.array(relIntensities) #intensity ratios for each transition
+        '''Calculates relative intensities of allowed HFS transitions of the fine structure transition.'''
+        self.listF = ri.AllowedTransitions(self.I, self.upperJ, self.lowerJ)  # list of [upperF, lowerF] transitions
+        self.relIntensities = np.array([
+            ri.RelIntensity(self.I, self.upperJ, self.lowerJ, upperF, lowerF)
+            for upperF, lowerF in self.listF
+        ]) #intensity ratios fr each transition
 
     def ParamsGuess(self, p = [0, 0, 0, 0, 0.150, 0.005, -1, -1, 0]):
         '''
@@ -453,7 +475,6 @@ class hfs:
         if guessingAfterwards == True:
             self.PlotGuess()
 
-
     def PlotLine(self, params, components = False):
         '''
         Interactive model visualisation, best used to find initial guesses!
@@ -618,7 +639,6 @@ class hfs:
         self.title = self.upperLevel + '--->' + self.lowerLevel + ' at ' + str(round(self.paramsGuess[7], 3)) + r'cm$^{-1}$ (' + self.dataFile + ')'
         plt.suptitle(self.title)
         plt.show()
-        
         
     def SaveF(self, replace = False):
         '''
