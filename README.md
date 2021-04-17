@@ -8,28 +8,36 @@
 # Quickstart
 
 * requires python 3.6 or higher
-* run `pip install -rrequirements.txt` to install dependencies
-* run `example.py` in an interactive python environment
+* run `pip install .` to install package
+* run `example.py` in an interactive python environment to see an example
+
+# Testing
+
+To run the package tests, first install tox (`pip install tox`) then:
+
+* `tox -e pytest` to run test suite in a virtual environment (may take a few mins)
+* `tox -e pylint` to lint code
 
 # Files and Explanations
 
-1) example.py - basic usage.
-
-2) fitLog.xlsx - parameters saved here when desired.
-
-3) hfs_fit.py - Main script that makes use of others, contains class for spectrum, contains fitting, plotting algorithms.
-
-4) interpolation.py - used for cubic spline interpolation when specified in hfs_fit.py.
-
-5) LU.py - LU decomposition for interpolation.py.
-
-6) matrixmult.py - matrix multiplication for LU.py.
-
-7) relInt.py - routine to calculate relative intensities of HFS components, used by hfs_fit.py.
-
-8) spectrum.txt - a small portion of an UV Co II spectrum with 4 Co II lines.
-
-9) fits - folder containing saved plots.
+📦hfs_fit
+ ┣ 📂data (holds )
+ ┃ ┣ 📜fitLog.xlsx (parameters saved here when desired)
+ ┃ ┣ 📜z3P2---a3D3 (spectrum.txt).png (example output plot)
+ ┃ ┗ 📜spectrum.txt (UV sample of Co II spectrum with 4 Co II lines)
+ ┣ 📂hfs_fit
+ ┃ ┣ 📜interpolation.py (cubic spline interpolation in hfs_fit.py.)
+ ┃ ┣ 📜relInt.py (calculate relative intensities of HFS components)
+ ┃ ┣ 📜matrixmult.py (depreciated)
+ ┃ ┣ 📜hfs_fit.py (main class)
+ ┃ ┣ 📜LU.py (LU decomposition for interpolation.py)
+ ┃ ┗ 📜__init__.py
+ ┣ 📂tests (test suite)
+ ┣ 📜README.md
+ ┣ 📜example.py (demonstraints basic usage)
+ ┣ 📜setup.cfg (package settings)
+ ┣ 📜setup.py
+ ┗ 📜tox.ini (test config)
 
 # Useful Functions and Notes
 
