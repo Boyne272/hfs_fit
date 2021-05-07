@@ -9,7 +9,7 @@ import hfs_fit.interpolation as interp
 import hfs_fit.relInt as ri
 
 
-#Change in wavenumber from hfs splitting (of a fine-structure level) is given by 
+#Change in wavenumber from hfs splitting (of a fine-structure level) is given by
 def K(F, J, I):
     return F * (F + 1) - J * (J + 1) - I * (I + 1)
 
@@ -29,7 +29,7 @@ def satFit(fit, sat):
 
 def get_user_wavenumber():
     """Get the users input for hfs.WNRange.
-    
+
     # TODO make this something the user passes into the class instanciation
     rathing than insiting on dynamic input.
 
@@ -56,13 +56,13 @@ def get_user_wavenumber():
 
 def get_user_noise():
     """Get the users input for hfs.Noise.
-    
+
     # TODO all the todos of get_user_wavenumber here aswell
 
     returns:
         start_wn
         end_wn
-        
+
     """
     print('Noise estimation starting wavenumber (/cm): ')
     start_wn = float(input())
@@ -73,22 +73,87 @@ def get_user_noise():
 
 def get_user_levels():
     """Get the users input for hfs.SetJNoLevList.
-    
+
     # TODO all the todos of get_user_wavenumber here aswell
 
     returns:
         start_wn
         end_wn
-        
+
     """
     print('Upper level J value: ')
     upperJ = float(input())
     print('Lower level J value: ')
-    lowerJ = float(input())    
+    lowerJ = float(input())
     return upperJ, lowerJ
 
 
+def init_param_guess(
+    i: 'some kind of spline',
+    w: 'some kind of x axis',
+    *,
+    AUpperGuess=0,
+    ALowerGuess=0,
+    BUpperGuess=0,
+    BLowerGuess=0,
+    sGaussianGuess=0.150,
+    gCauchyGuess=0.005,
+    areaGuess=-1,
+    cogwnGuess=-1,
+    saturationGuess=0
+):
+    '''
+    Sets all parameter guesses.
+
+    Notes:
+        * As, Bs, Gw and Lw are input in /cm.
+        * results usually doppler dominated so expect lorentzian width to be very small
+        * CoG wavenumber and area guesses are calculated automatically based on the selected wavenumber range and line profiles
+
+    parameters:
+        i: no idea
+        w: also no idea
+
+    '''
+    #Obtain guesses for As and Bs
+    temp = np.array([
+        AUpperGuess,
+        ALowerGuess,
+        BUpperGuess,
+        BLowerGuess,
+        sGaussianGuess,
+        gCauchyGuess,
+        areaGuess,
+        cogwnGuess,
+        saturationGuess
+    ], dtype = 'float64')
+    temp[7] = (w * i).sum() / i.sum()
+    area = np.trapz(i, w)
+    temp[6] = area
+    paramsGuess = temp
+    #Guess B to be zero, since they tend to be small.
+    paramsGuess[2] = 0
+    paramsGuess[3] = 0
+    return paramsGuess
+
+
+def estimate_noise(data, normFactor):
+    '''
+    Estimates noise and SNR.
+    With given inputs.
+    '''
+    start_wn, end_wn = get_user_noise()
+    line = np.array([d for d in data if d[0] >= start_wn and d[0] <= end_wn])
+    line[:, 1] /= normFactor
+    SNR = 1. / np.std(line[:, 1], ddof=1)
+    return SNR
+
+
 class hfs:
+
+    paramsUnits = ['mK','mK','mK','mK','mK','mK','arb.','/cm','arb.']
+    paramsNames  = ['A_u', 'A_l', 'B_u', 'B_l', 'G_w', 'L_w', 'Area Parameter', 'CoG Wavenumber', 'Saturation Parameter']
+
     def __init__(self, dataASCII = 'spectrum.txt', fitLog = 'fitLog.xlsx', nuclearSpin = 3.5):
         '''
         input strings can be directories to the files.
@@ -111,16 +176,13 @@ class hfs:
             return
         print('Done')
 
-        self.paramsUnits = ['mK','mK','mK','mK','mK','mK','arb.','/cm','arb.']
-        self.paramsNames  = ['A_u', 'A_l', 'B_u', 'B_l', 'G_w', 'L_w', 'Area Parameter', 'CoG Wavenumber', 'Saturation Parameter']
-
     def PlotSpec(self, wn = None):
         '''
         Plots the spectrum, specifying a wavenumber will plot a +- 1/cm range around it.
         '''
         plt.close(0)
         plt.figure(0)
-        plt.plot(self.data[:, 0], self.data[:, 1], label = 'Spectrum')        
+        plt.plot(self.data[:, 0], self.data[:, 1], label = 'Spectrum')
         plt.xlabel(r'Wavenumber (cm$^{-1}$)')
         plt.ylabel('Intensity (arb.)')
         plt.title('Spectrum ' + self.dataFile)
@@ -135,15 +197,25 @@ class hfs:
         Resets everything (J, A, B, Gw, etc.) so make sure you save the previous fit.
         Have the wn range for the line and wn range for the noise ready.
         '''
-        self.SetJNoLevList()
-        self.firstFit = True
+
+        # self.SetJNoLevList()
+        '''
+        Sets J values, calculate all transitions and list in terms of F values. Relative intensity calculation.
+        '''
+        self.upperJ, self.lowerJ = get_user_levels()
+        self.AllowedTransitions()
+        self.Swing()
+        self.WNRange()
+
+        self.firstFit = True  # TODO fix me I seem to be a hack
         self.Hold()
-        self.ParamsGuess()
+        self.paramsGuess = init_param_guess(self.i, self.w)
+        print('Current rms = ' + str(self.Residual(self.paramsGuess)))
         self.lineDerivSum = self.DerivSum()
 
     def WNRange(self, nInterp = 1):
         '''
-        set wavenumber range for fitting
+        Set wavenumber range for fitting
         nInterp is number of points of even spacing between actual data to interpolate (cubic spline), set 1 for no interpolation
         note nInterp will chagne the value from DerivSum().
         '''
@@ -152,35 +224,25 @@ class hfs:
         line = np.array([d for d in self.data if d[0] >= self.start_wn and d[0] <= self.end_wn])
         self.line = cp.copy(line) #original, non-normalised non-interpolated data
         self.normFactor = line[:, 1].max()
-        line[:, 1] /= self.normFactor #normalise line by amplitude 
+        line[:, 1] /= self.normFactor #normalise line by amplitude
         #number of points between two neghibouring data points to interpolate
         self.w = np.linspace(line[:, 0][0], line[:, 0][-1], nInterp * (len(line[:, 0])) - nInterp + 1)
         self.spline = interp.CS(line[:, 1], line[:, 0])
- 
+
         #------------------------------------------------------
         #This is the intensity of data interpolated and fitted.
         self.i = self.spline.interp(self.w) #small i attribute is the interpolated instensity
         #------------------------------------------------------
 
         self.N = self.w.size #number of points after interpolation
-        self.Noise()
+        self.SNR = estimate_noise(self.data, self.normFactor)
         temp = np.fft.fft(self.i)
         for i, val in enumerate(temp):
             if np.abs(val) < 0.01 * np.max(np.abs(temp)):
                 self.icut = i - 1 # -1 seems to give the best index for apodisation, can change this in plot anyway.
                 return
 
-    def Noise(self):
-        '''
-        Estimates noise and SNR.
-        With given inputs.
-        '''
-        start_wn, end_wn = get_user_noise()
-        line = np.array([d for d in self.data if d[0] >= start_wn and d[0] <= end_wn])
-        line[:, 1] /= self.normFactor
-        self.SNR = 1. / np.std(line[:, 1], ddof = 1)
-        
-        
+
     def FitDone(self, u, l):
         '''
         -Check if fit already been done
@@ -194,9 +256,9 @@ class hfs:
 
     def DerivSum(self):
         '''
-        -Used to find how wiggly a line is within self.WNRange(), 
+        -Used to find how wiggly a line is within self.WNRange(),
         -Usually the more wiggly a line is the better parameters are constrained.
-        -Essentially the sum of the magnitude of differences in intensity between 
+        -Essentially the sum of the magnitude of differences in intensity between
         neighbouring points divided by resolution.
         '''
         #Normalise x axis
@@ -205,16 +267,6 @@ class hfs:
         i = self.FitLine(self.paramsGuess)
         d = np.gradient(i, w)
         return np.abs(d).sum()
-        
-
-    def SetJNoLevList(self):
-        '''
-        Sets J values, calculate all transitions and list in terms of F values. Relative intensity calculation.
-        '''
-        self.upperJ, self.lowerJ = get_user_levels() 
-        self.AllowedTransitions()
-        self.Swing()
-        self.WNRange()
 
     def AllowedTransitions(self):
         '''
@@ -226,30 +278,11 @@ class hfs:
             relIntensities.append(ri.RelIntensity(self.I, self.upperJ, self.lowerJ, f[0], f[1]))
         self.relIntensities = np.array(relIntensities) #intensity ratios for each transition
 
-    def ParamsGuess(self, p = [0, 0, 0, 0, 0.150, 0.005, -1, -1, 0]):
-        '''
-        Sets all parameter guesses.
-        As, Bs, Gw and Lw are input in /cm.
-        p = [AUpperGuess, ALowerGuess, BUpperGuess, BLowerGuess, sGaussianGuess, gCauchyGuess, areaGuess, cogwnGuess, saturationGuess]
-        our results are usally doppler dominated so expect lorentzian width to be very small
-        CoG wavenumber and area guesses are calculated automatically based on the selected wavenumber range and line profiles
-        '''
-        #Obtain guesses for As and Bs
-        temp = np.array(p, dtype = 'float64')
-        temp[7] = (self.w * self.i).sum() / self.i.sum()
-        area = np.trapz(self.i, self.w)
-        temp[6] = area
-        self.paramsGuess = temp
-        #Guess B to be zero, since they tend to be small.
-        self.paramsGuess[2] = 0
-        self.paramsGuess[3] = 0
-        print('Current rms = ' + str(self.Residual(self.paramsGuess)))
-
     def ApoFit(self, fit):
         '''
         Given a fit of Voigt functions sum, apodise the interferogram (phase included, using the complex amplitude)
         of the fitted spectrum from where the observed interferogram first reaches zero.
-        this needs to be done as the mirrors moved a finite distance, apodising the interferogram and caused ringing of lines 
+        this needs to be done as the mirrors moved a finite distance, apodising the interferogram and caused ringing of lines
         '''
         I_fit = np.fft.fft(fit)
         self.I_apo_fit = cp.copy(I_fit)
@@ -381,7 +414,7 @@ class hfs:
         Halves jump widths for fitting.
         '''
         self.jumpWidths = (np.array(self.jumpWidths) * .5).tolist()
-        
+
     def PlotGuess(self, components = True):
         '''
         Plots guess fit based on self.paramsGuess
@@ -458,7 +491,7 @@ class hfs:
         '''
         Interactive model visualisation, best used to find initial guesses!
         Guess parameters are updated whenever a parameter is changed!
-        Can change whether a param is held or not in the optimisation, 
+        Can change whether a param is held or not in the optimisation,
         but it doesn't stop you from changing the param on the plot,
         so do not change a parameter if you want it held in the minimisation.
         Reset button doesn't seem to work in iPython... but initial values are indicated by redline.
@@ -590,7 +623,7 @@ class hfs:
         sAreah.on_changed(update)
         sCoGh.on_changed(update)
         sSh.on_changed(update)
-        
+
         #Reset button
         resetax = plt.axes([.05, .24, .06, .04])
         button = Button(resetax, 'Reset', color = axcolor, hovercolor = '0.975')
@@ -614,15 +647,15 @@ class hfs:
             sArea.reset()
             sCoG.reset()
             sS.reset()
-        button.on_clicked(reset)     
+        button.on_clicked(reset)
         self.title = self.upperLevel + '--->' + self.lowerLevel + ' at ' + str(round(self.paramsGuess[7], 3)) + r'cm$^{-1}$ (' + self.dataFile + ')'
         plt.suptitle(self.title)
         plt.show()
-        
-        
+
+
     def SaveF(self, replace = False):
         '''
-        If fitting same line, replace = True will replace previous results, 
+        If fitting same line, replace = True will replace previous results,
         but figure gets replaced regardless.
         Keep figure open when running this if on iPython.
         '''
@@ -647,8 +680,8 @@ class hfs:
                 self.fitLog.loc[index] = row.values.flatten()
                 newFitLog = self.fitLog
             newFitLog.to_excel(self.fitLogName)
-            self.fitLog = pd.read_excel(self.fitLogName, index_col = 0)         
-    
+            self.fitLog = pd.read_excel(self.fitLogName, index_col = 0)
+
     def LineFig(self, fitLogIndex, nInterp = 1):
         '''
         Plots line and components with transition diagram for fits in fitLog.xlsx.
@@ -662,46 +695,46 @@ class hfs:
             print('Done')
         self.paramsGuess = np.array(log[3:12])
         self.paramsGuess[:6] *= 1e-3
-        
+
         print('SNR ', int(log[-6]))
         self.upperJ = int(log[1][-1])
         self.lowerJ = int(log[2][-1])
         self.AllowedTransitions()
-        
+
         self.start_wn = log[-2]
         self.end_wn = log[-1]
-        
+
         #cut paste from WNRange
         line = np.array([d for d in self.data if d[0] >= self.start_wn and d[0] <= self.end_wn])
         self.line = cp.copy(line) #original, non-normalised non-interpolated data
         self.normFactor = line[:, 1].max()
-        line[:, 1] /= self.normFactor #normalise line by amplitude 
+        line[:, 1] /= self.normFactor #normalise line by amplitude
         #number of points between two neghibouring data points to interpolate
         self.w = np.linspace(line[:, 0][0], line[:, 0][-1], nInterp * (len(line[:, 0])) - nInterp + 1)
         self.spline = interp.CS(line[:, 1], line[:, 0])
- 
+
         #------------------------------------------------------
         #This is the intensity of data interpolated and fitted.
         self.i = self.spline.interp(self.w) #small i attribute is the interpolated instensity
         #------------------------------------------------------
-        
+
         self.icut = log[-7]
         fit = self.FitLine(self.paramsGuess)
-        
+
         Au = log[3]
         Al = log[4]
-        
+
         upperFs = np.unique(self.listF[:, 0])
         lowerFs = np.unique(self.listF[:, 1])
 
         upperY = []
         for i, E in enumerate(upperFs * Au):
             upperY.append((upperFs * Au)[:i+1].sum())
-        
+
         lowerY = []
         for i, E in enumerate(lowerFs * Al):
             lowerY.append((lowerFs * Al)[:i+1].sum())
-        
+
         #print(upperY, lowerY)
         upperY = np.array(upperY) - np.min(upperY) + np.max(lowerY)
         #print(upperY)
@@ -715,9 +748,9 @@ class hfs:
         #print(upperY)
         fig, (ax1, ax2) = plt.subplots(2, num = str(log[1]) + ' to ' + str(log[2]),figsize = (4.5, 6.5))
         plt.subplots_adjust(hspace = 0.4)
-        
+
         ax1.axis('off')
-        
+
         ax1.set_xlim(self.w[0], self.w[-1])
         ax1.locator_params(axis='x', nbins=4)
         ax1.ticklabel_format(useOffset=False)
@@ -727,21 +760,21 @@ class hfs:
         ax1.text( self.w[0] + frac * wnrange, np.max(upperY) + 0.3 * maxGap, log[1])
         ax1.text( self.w[0] + frac * wnrange, np.min(lowerY) - 0.7 * maxGap, log[2])
         ax1.text( self.w[0] + .6 * wnrange, np.max(upperY) + 0.3 * maxGap, 'A = ' + str(round(Au,1)) + ' mK')
-        ax1.text( self.w[0] + .6 * wnrange, np.min(lowerY) - 0.7 * maxGap, 'A = ' + str(round(Al,1)) + ' mK')        
+        ax1.text( self.w[0] + .6 * wnrange, np.min(lowerY) - 0.7 * maxGap, 'A = ' + str(round(Al,1)) + ' mK')
         ax1.hlines(upperY.tolist() + lowerY, xmin = self.w[0] + frac * wnrange, xmax = self.w[-1] - frac * wnrange, color = 'k')
         ax1.vlines([self.w[0] + frac * wnrange, self.w[0] + frac * wnrange], ymin = [np.min(upperY), np.min(lowerY)], ymax = [np.max(upperY), np.max(lowerY)], color = 'k')
         fs = 10
         for i, l in enumerate(self.hfsLines):
             uppery = upperY[np.where(upperFs == self.listF[i][0])[0][0]]
             lowery = lowerY[np.where(lowerFs == self.listF[i][1])[0][0]]
-            #ax1.arrow(l, uppery, 0, lowery-uppery, width = 1e-3 * wnrange, head_length = 0.05 * yrange, head_width = 0.02 * wnrange, length_includes_head = True, color = 'k')        
+            #ax1.arrow(l, uppery, 0, lowery-uppery, width = 1e-3 * wnrange, head_length = 0.05 * yrange, head_width = 0.02 * wnrange, length_includes_head = True, color = 'k')
             ax1.annotate('', xy=(l, lowery), xytext=(l, uppery), arrowprops = dict(arrowstyle='->', color = 'r', shrinkA = 0, shrinkB = 0))
             if uppery != np.max(upperY):
                 if True == False: #(Au * 3) > Al:
                     ax1.text(self.w[0] + frac * wnrange / 2, uppery, str(self.listF[i][0]), verticalalignment='center', horizontalalignment='right', fontsize = fs)
-                else: 
+                else:
                     if uppery == np.min(upperY):
-                        ax1.text(self.w[0] + frac * wnrange / 2, uppery, str(self.listF[i][0]), verticalalignment='center', horizontalalignment='right', fontsize = fs)                    
+                        ax1.text(self.w[0] + frac * wnrange / 2, uppery, str(self.listF[i][0]), verticalalignment='center', horizontalalignment='right', fontsize = fs)
             else:
                 ax1.text(self.w[0] + frac * wnrange / 2, uppery, 'F = ' + str(self.listF[i][0]), verticalalignment='center', horizontalalignment='right', fontsize = fs)
             if lowery != np.min(lowerY):
