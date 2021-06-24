@@ -131,17 +131,20 @@ class hfs:
         self.data = np.loadtxt(self.dataFile, delimiter = ',')
         print('Done')
 
+        # initialize later used parameters (as we should do if we are good boys)
+
+
 
     # util functions --------------------------------------
 
-    def estimate_noise(self, data, normFactor):
+    @property
+    def SNR(self):
         '''
         Estimates noise and SNR.
         With given inputs.
         '''
-        # start_wn, end_wn = get_user_noise()
-        line = np.array([d for d in data if d[0] >= self.noise_start_wn and d[0] <= self.noise_end_wn])
-        line[:, 1] /= normFactor
+        line = np.array([d for d in self.data if d[0] >= self.noise_start_wn and d[0] <= self.noise_end_wn])
+        line[:, 1] /= self.normFactor
         SNR = 1. / np.std(line[:, 1], ddof=1)
         return SNR
 
@@ -208,13 +211,11 @@ class hfs:
         #------------------------------------------------------
 
         self.N = self.w.size #number of points after interpolation
-        self.SNR = self.estimate_noise(self.data, self.normFactor)
         temp = np.fft.fft(self.i)
         for i, val in enumerate(temp):
             if np.abs(val) < 0.01 * np.max(np.abs(temp)):
                 self.icut = i - 1 # -1 seems to give the best index for apodisation, can change this in plot anyway.
                 return
-
 
     def FitDone(self, u, l):
         '''

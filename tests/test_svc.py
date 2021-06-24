@@ -7,16 +7,8 @@ from numpy import testing
 from hfs_fit import hfs
 
 
-# @patch('hfs_fit.hfs_fit.get_user_levels')
-# @patch('hfs_fit.hfs_fit.get_user_wavenumber')
-# @patch('hfs_fit.hfs_fit.get_user_noise')
 def test_hfs():
     """Run a full test of the script."""
-    # setup
-    # mock_user_levels.return_value = 2, 2
-    # mock_user_noise.return_value = 37945, 37975
-    # mock_user_wavenumber.return_value = 'z5S2', 'a5P2', 37978, 37980
-
     # run svc
     obj = hfs(
         'tests/sample_spectrum.txt',
