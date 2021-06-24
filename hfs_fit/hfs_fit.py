@@ -27,67 +27,6 @@ def satFit(fit, sat):
     return fit * np.exp(- sat * fit)
 
 
-def get_user_wavenumber():
-    """Get the users input for hfs.WNRange.
-
-    # TODO make this something the user passes into the class instanciation
-    rathing than insiting on dynamic input.
-
-    # TODO add some descriptions as to WTF each of these options are
-    rather than assuming omniscience from the user
-
-    returns:
-        upperLevel
-        lowerLevel
-        start_wn
-        end_wn
-
-    """
-    print('Upper Level Label: ')
-    upperLevel = str(input())
-    print('Lower Level Label: ')
-    lowerLevel = str(input())
-    print('Starting wavenumber (/cm): ')
-    start_wn = float(input())
-    print('End wavenumber (/cm): ')
-    end_wn = float(input())
-    return upperLevel, lowerLevel, start_wn, end_wn
-
-
-def get_user_noise():
-    """Get the users input for hfs.Noise.
-
-    # TODO all the todos of get_user_wavenumber here aswell
-
-    returns:
-        start_wn
-        end_wn
-
-    """
-    print('Noise estimation starting wavenumber (/cm): ')
-    start_wn = float(input())
-    print('Noise estimation end wavenumber (/cm): ')
-    end_wn = float(input())
-    return start_wn, end_wn
-
-
-def get_user_levels():
-    """Get the users input for hfs.SetJNoLevList.
-
-    # TODO all the todos of get_user_wavenumber here aswell
-
-    returns:
-        start_wn
-        end_wn
-
-    """
-    print('Upper level J value: ')
-    upperJ = float(input())
-    print('Lower level J value: ')
-    lowerJ = float(input())
-    return upperJ, lowerJ
-
-
 def init_param_guess(
     i: 'some kind of spline',
     w: 'some kind of x axis',
@@ -137,16 +76,10 @@ def init_param_guess(
     return paramsGuess
 
 
-def estimate_noise(data, normFactor):
-    '''
-    Estimates noise and SNR.
-    With given inputs.
-    '''
-    start_wn, end_wn = get_user_noise()
-    line = np.array([d for d in data if d[0] >= start_wn and d[0] <= end_wn])
-    line[:, 1] /= normFactor
-    SNR = 1. / np.std(line[:, 1], ddof=1)
-    return SNR
+def _get_input(text: str, type_: type = float):
+    """Get user input of the given type."""
+    print(text)
+    return type_(input())
 
 
 class hfs:
@@ -154,27 +87,65 @@ class hfs:
     paramsUnits = ['mK','mK','mK','mK','mK','mK','arb.','/cm','arb.']
     paramsNames  = ['A_u', 'A_l', 'B_u', 'B_l', 'G_w', 'L_w', 'Area Parameter', 'CoG Wavenumber', 'Saturation Parameter']
 
-    def __init__(self, dataASCII = 'spectrum.txt', fitLog = 'fitLog.xlsx', nuclearSpin = 3.5):
+    def __init__(
+        self,
+        dataASCII: str = 'spectrum.txt',
+        fitLog: str = 'fitLog.xlsx',
+        nuclearSpin: float = 3.5,
+        *,
+        upperJ: float = None,
+        lowerJ: float = None,
+        noise_start_wn: float = None,
+        noise_end_wn: float = None,
+        upperLabel: str = None,
+        lowerLabel: str = None,
+        start_wn: float = None,
+        end_wn: float = None
+    ):
         '''
         input strings can be directories to the files.
         dataASCII is the string of directory to asc file of spectral data
         (CSV, first column is wavenumber, second column is intensity)
         '''
-        if fitLog != None:
-            self.fitLogName = fitLog
-            self.fitLog = pd.read_excel(self.fitLogName, index_col = 0)
-        else:
-            self.fitLogName = None
-            self.fitLog = None
+        # get user input if needed
+        self.upperJ = upperJ or _get_input('Upper level J value: ')
+        self.lowerJ = lowerJ or _get_input('Lower level J value: ')
+        self.noise_start_wn = noise_start_wn or _get_input('Noise estimation start wavenumber (/cm): ')
+        self.noise_end_wn = noise_end_wn or _get_input('Noise estimation end wavenumber (/cm): ')
+        self.upperLabel = upperLabel or _get_input('Upper Level Label (can be blank): ', str) or 'Upper Level'
+        self.lowerLabel = lowerLabel or _get_input('Lower Level Label: (can be blank)', str) or 'Lower Level'
+        self.start_wn = start_wn or _get_input('Starting wavenumber (/cm): ')
+        self.end_wn = end_wn or _get_input('End wavenumber (/cm): ')
+
+        # unpack inputs
+        self.fitLogName = fitLog
         self.I = nuclearSpin
-        print('Loading spectrum...')
         self.dataFile = dataASCII
-        if isinstance(dataASCII, str) == True:
-            self.data = np.loadtxt(self.dataFile, delimiter = ',')
-        else:
-            print('Please use an ASCII file for the spectrum.')
-            return
+
+        # validate inputs
+        # TODO PUT MORE OF ME IN
+        assert isinstance(dataASCII, str), 'Please use an ASCII file for the spectrum.'
+
+        print('Loading Log & Spectrum...')
+        self.fitLog = pd.read_excel(self.fitLogName, index_col = 0) if self.fitLogName else None
+        self.data = np.loadtxt(self.dataFile, delimiter = ',')
         print('Done')
+
+
+    # util functions --------------------------------------
+
+    def estimate_noise(self, data, normFactor):
+        '''
+        Estimates noise and SNR.
+        With given inputs.
+        '''
+        # start_wn, end_wn = get_user_noise()
+        line = np.array([d for d in data if d[0] >= self.noise_start_wn and d[0] <= self.noise_end_wn])
+        line[:, 1] /= normFactor
+        SNR = 1. / np.std(line[:, 1], ddof=1)
+        return SNR
+
+    # plot functions --------------------------------------
 
     def PlotSpec(self, wn = None):
         '''
@@ -191,6 +162,8 @@ class hfs:
         plt.grid()
         plt.show()
 
+    # wtf these are ---------------------------------------
+
     def NewFit(self):
         '''
         Call this whenever you want to fit a new line.
@@ -202,7 +175,7 @@ class hfs:
         '''
         Sets J values, calculate all transitions and list in terms of F values. Relative intensity calculation.
         '''
-        self.upperJ, self.lowerJ = get_user_levels()
+        # self.upperJ, self.lowerJ used here
         self.AllowedTransitions()
         self.Swing()
         self.WNRange()
@@ -219,8 +192,8 @@ class hfs:
         nInterp is number of points of even spacing between actual data to interpolate (cubic spline), set 1 for no interpolation
         note nInterp will chagne the value from DerivSum().
         '''
-        self.upperLevel, self.lowerLevel, self.start_wn, self.end_wn = get_user_wavenumber()
-        self.FitDone(self.upperLevel, self.lowerLevel)
+        # self.upperLabel, self.lowerLabel, self.start_wn, self.end_wn = get_user_wavenumber()
+        self.FitDone(self.upperLabel, self.lowerLabel)
         line = np.array([d for d in self.data if d[0] >= self.start_wn and d[0] <= self.end_wn])
         self.line = cp.copy(line) #original, non-normalised non-interpolated data
         self.normFactor = line[:, 1].max()
@@ -235,7 +208,7 @@ class hfs:
         #------------------------------------------------------
 
         self.N = self.w.size #number of points after interpolation
-        self.SNR = estimate_noise(self.data, self.normFactor)
+        self.SNR = self.estimate_noise(self.data, self.normFactor)
         temp = np.fft.fft(self.i)
         for i, val in enumerate(temp):
             if np.abs(val) < 0.01 * np.max(np.abs(temp)):
@@ -479,7 +452,7 @@ class hfs:
             self.PlotGuess()
 
 
-    def PlotGuess(self, params, components = False):
+    def PlotGuess(self, params = None, components = False):
         '''
         Interactive model visualisation, best used to find initial guesses!
         Guess parameters are updated whenever a parameter is changed!
@@ -498,7 +471,7 @@ class hfs:
         fig, ax = plt.subplots(figsize = (12, 8))
         plt.subplots_adjust(left = 0.2, bottom = 0.4)
         w = self.w
-        params = self.paramsGuess
+        params = params or self.paramsGuess
         s = self.FitLine(params)
         (l, ) = plt.plot(w, s, 'r--', lw = 2, label = 'fit')
         if components == True: #strictly after s = self.FitLine(params)
@@ -648,7 +621,7 @@ class hfs:
             sCoG.reset()
             sS.reset()
         button.on_clicked(reset)
-        self.title = self.upperLevel + '--->' + self.lowerLevel + ' at ' + str(round(self.paramsGuess[7], 3)) + r'cm$^{-1}$ (' + self.dataFile + ')'
+        self.title = self.upperLabel + '--->' + self.lowerLabel + ' at ' + str(round(self.paramsGuess[7], 3)) + r'cm$^{-1}$ (' + self.dataFile + ')'
         plt.suptitle(self.title)
         plt.show()
 
@@ -660,7 +633,7 @@ class hfs:
         Keep figure open when running this if on iPython.
         '''
         self.lineDerivSum = self.DerivSum() #final wiggle index, multiply with SNR for weight.
-        plt.savefig('./fits/'+self.upperLevel + '---' + self.lowerLevel + ' (' + self.dataFile + ').png')
+        plt.savefig('./fits/'+self.upperLabel + '---' + self.lowerLabel + ' (' + self.dataFile + ').png')
         if self.fitLogName != None:
             temp = cp.copy(self.paramsGuess)
             temp[:6] *= 1e3
@@ -669,14 +642,14 @@ class hfs:
             temp2[:6] *= 1e3
             temp2 = temp2.tolist()
             self.lineWidth = self.w[-1] - self.w[0]
-            row = [[self.dataFile, self.upperLevel, self.lowerLevel] + temp + temp2 + [self.icut, self.SNR, self.lineWidth, self.Residual(self.paramsGuess), self.lineDerivSum, self.w[0], self.w[-1]]]
+            row = [[self.dataFile, self.upperLabel, self.lowerLabel] + temp + temp2 + [self.icut, self.SNR, self.lineWidth, self.Residual(self.paramsGuess), self.lineDerivSum, self.w[0], self.w[-1]]]
             row = pd.DataFrame(row, columns = ['Spectrum','Upper Level','Lower Level','Au','Al','Bu','Bl','Gw','Lw',
            'Area','CoGWN','Saturation','AuEr','AlEr','BuEr','BlEr','GwEr','LwEr',
            'AreaEr','CoGWNEr','SaturationEr','icut','SNR','Width','RMS','WiggleIndex','StartWN','EndWN'])
             if replace == False:
                 newFitLog = self.fitLog.append(row, ignore_index = 1)
             else:
-                index = self.fitLog[(self.fitLog['Upper Level'] == self.upperLevel) & (self.fitLog['Lower Level'] == self.lowerLevel) & (self.fitLog['Spectrum'] == self.dataFile)].index
+                index = self.fitLog[(self.fitLog['Upper Level'] == self.upperLabel) & (self.fitLog['Lower Level'] == self.lowerLabel) & (self.fitLog['Spectrum'] == self.dataFile)].index
                 self.fitLog.loc[index] = row.values.flatten()
                 newFitLog = self.fitLog
             newFitLog.to_excel(self.fitLogName)
