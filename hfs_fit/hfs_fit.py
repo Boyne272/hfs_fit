@@ -415,14 +415,6 @@ class hfs:
         '''
         self.jumpWidths = (np.array(self.jumpWidths) * .5).tolist()
 
-    def PlotGuess(self, components = True):
-        '''
-        Plots guess fit based on self.paramsGuess
-        components = False would stop showing the components on plot.
-        '''
-        print('Drag around parameters for initial guess, close window once done')
-        self.PlotLine(self.paramsGuess, components)
-
     def PrintParams(self, params, er = []):
         '''
         print either self.paramsGuess or self.fitParams
@@ -487,7 +479,7 @@ class hfs:
             self.PlotGuess()
 
 
-    def PlotLine(self, params, components = False):
+    def PlotGuess(self, params, components = False):
         '''
         Interactive model visualisation, best used to find initial guesses!
         Guess parameters are updated whenever a parameter is changed!
@@ -495,10 +487,18 @@ class hfs:
         but it doesn't stop you from changing the param on the plot,
         so do not change a parameter if you want it held in the minimisation.
         Reset button doesn't seem to work in iPython... but initial values are indicated by redline.
+
+        PlotGuess old docs
+
+        Plots guess fit based on self.paramsGuess
+        components = False would stop showing the components on plot.
         '''
+        print('Drag around parameters for initial guess, close window once done')
+
         fig, ax = plt.subplots(figsize = (12, 8))
         plt.subplots_adjust(left = 0.2, bottom = 0.4)
         w = self.w
+        params = self.paramsGuess
         s = self.FitLine(params)
         (l, ) = plt.plot(w, s, 'r--', lw = 2, label = 'fit')
         if components == True: #strictly after s = self.FitLine(params)
